@@ -244,6 +244,14 @@ TOOL_CATEGORIES = {
                     {"key": "FIRECRAWL_API_URL", "prompt": "Your Firecrawl instance URL (e.g., http://localhost:3002)"},
                 ],
             },
+            {
+                "name": "SearXNG",
+                "tag": "Free, self-hosted, privacy-respecting metasearch engine",
+                "web_backend": "searxng",
+                "env_vars": [
+                    {"key": "SEARXNG_BASE_URL", "prompt": "Your SearXNG instance URL (e.g., http://localhost:8080)"},
+                ],
+            },
         ],
     },
     "image_gen": {
