@@ -2,7 +2,7 @@ name: Build and Push to GHCR
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
     paths:
       - "**/*.py"
       - "pyproject.toml"
@@ -10,10 +10,13 @@ on:
       - "Dockerfile"
       - "docker/**"
       - ".github/workflows/docker-ghcr.yml"
+  schedule:
+    # Check upstream every 6 hours
+    - cron: "0 */6 * * *"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 concurrency:
@@ -21,13 +24,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  sync-upstream:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      updated: ${{ steps.sync.outputs.updated }}
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync with upstream
+        id: sync
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/NousResearch/hermes-agent.git
+          git fetch upstream main
+          LOCAL=$(git rev-parse HEAD)
+          UPSTREAM=$(git rev-parse upstream/main)
+          if [ "$LOCAL" = "$UPSTREAM" ]; then
+            echo "Already up to date."
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New upstream commits found, merging..."
+            git merge upstream/main --no-edit
+            git push origin main
+            echo "updated=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build-and-push:
+    needs: [sync-upstream]
+    if: always() && (needs.sync-upstream.result == 'skipped' || needs.sync-upstream.outputs.updated == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          ref: main
           submodules: recursive
 
       - name: Set up QEMU
