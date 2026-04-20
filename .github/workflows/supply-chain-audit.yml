@@ -27,6 +27,7 @@ permissions:
 
 jobs:
   scan:
+    if: github.repository == 'NousResearch/hermes-agent'
     name: Scan PR for critical supply chain risks
     runs-on: ubuntu-latest
     steps:

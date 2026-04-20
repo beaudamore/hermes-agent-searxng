@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   deploy-vercel:
-    if: github.event_name == 'release'
+    if: github.repository == 'NousResearch/hermes-agent' && github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Vercel Deploy
