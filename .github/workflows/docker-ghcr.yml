@@ -2,7 +2,7 @@ name: Build and Push to GHCR
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
     paths:
       - "**/*.py"
       - "pyproject.toml"
@@ -55,8 +55,9 @@ jobs:
           fi
 
   build-and-push:
-    needs: [sync-upstream]
-    if: always() && (needs.sync-upstream.result == 'skipped' || needs.sync-upstream.outputs.updated == 'true')
+    needs: [ sync-upstream ]
+    if: always() && (needs.sync-upstream.result == 'skipped' ||
+      needs.sync-upstream.outputs.updated == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:

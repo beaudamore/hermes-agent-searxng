@@ -2,15 +2,15 @@ name: Supply Chain Audit
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [ opened, synchronize, reopened ]
     paths:
-      - '**/*.py'
-      - '**/*.pth'
-      - '**/setup.py'
-      - '**/setup.cfg'
-      - '**/sitecustomize.py'
-      - '**/usercustomize.py'
-      - '**/__init__.pth'
+      - "**/*.py"
+      - "**/*.pth"
+      - "**/setup.py"
+      - "**/setup.cfg"
+      - "**/sitecustomize.py"
+      - "**/usercustomize.py"
+      - "**/__init__.pth"
 
 permissions:
   pull-requests: write
@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
