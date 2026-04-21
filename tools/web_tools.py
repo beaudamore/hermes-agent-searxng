@@ -16,6 +16,7 @@ Backend compatibility:
 - Exa: https://exa.ai (search, extract)
 - Firecrawl: https://docs.firecrawl.dev/introduction (search, extract, crawl; direct or derived firecrawl-gateway.<domain> for Nous Subscribers)
 - Parallel: https://docs.parallel.ai (search, extract)
+- SearXNG: https://docs.searxng.org (search; self-hosted open-source federated search)
 - Tavily: https://tavily.com (search, extract, crawl)
 
 LLM Processing:
@@ -126,7 +127,7 @@ def _get_backend() -> str:
     keys manually without running setup.
     """
     configured = (_load_web_config().get("backend") or "").lower().strip()
-    if configured in ("parallel", "firecrawl", "tavily", "exa"):
+    if configured in ("parallel", "firecrawl", "tavily", "exa", "searxng"):
         return configured
 
     # Fallback for manual / legacy config — pick the highest-priority
@@ -134,6 +135,7 @@ def _get_backend() -> str:
     # tool gateway is configured for Nous subscribers.
     backend_candidates = (
         ("firecrawl", _has_env("FIRECRAWL_API_KEY") or _has_env("FIRECRAWL_API_URL") or _is_tool_gateway_ready()),
+        ("searxng", _has_env("SEARXNG_URL")),
         ("parallel", _has_env("PARALLEL_API_KEY")),
         ("tavily", _has_env("TAVILY_API_KEY")),
         ("exa", _has_env("EXA_API_KEY")),
@@ -155,6 +157,8 @@ def _is_backend_available(backend: str) -> bool:
         return check_firecrawl_api_key()
     if backend == "tavily":
         return _has_env("TAVILY_API_KEY")
+    if backend == "searxng":
+        return _has_env("SEARXNG_URL")
     return False
 
 # ─── Firecrawl Client ────────────────────────────────────────────────────────
@@ -227,6 +231,7 @@ def _web_requires_env() -> list[str]:
         "TAVILY_API_KEY",
         "FIRECRAWL_API_KEY",
         "FIRECRAWL_API_URL",
+        "SEARXNG_URL",
     ]
     if managed_nous_tools_enabled():
         requires.extend(
@@ -479,6 +484,53 @@ def _extract_scrape_payload(scrape_result: Any) -> Dict[str, Any]:
         return nested
 
     return result_plain
+
+
+def _get_searxng_url() -> str:
+    """Return the configured SearXNG instance URL."""
+    url = os.getenv("SEARXNG_URL", "").strip().rstrip("/")
+    if not url:
+        raise ValueError(
+            "SEARXNG_URL environment variable not set. "
+            "Set it to your SearXNG instance URL (e.g., https://searx.example.com)"
+        )
+    return url
+
+
+def _searxng_search(query: str, limit: int = 5) -> dict:
+    """Search using a SearXNG instance and return normalized results."""
+    from tools.interrupt import is_interrupted
+
+    if is_interrupted():
+        return {"error": "Interrupted", "success": False}
+
+    base_url = _get_searxng_url()
+    logger.info("SearXNG search: '%s' (limit=%d, base=%s)", query, limit, base_url)
+
+    response = httpx.get(
+        f"{base_url}/search",
+        params={
+            "q": query,
+            "format": "json",
+            "pageno": 1,
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    raw = response.json()
+
+    web_results = []
+    for i, result in enumerate(raw.get("results", [])):
+        if i >= limit:
+            break
+        web_results.append({
+            "url": result.get("url", ""),
+            "title": result.get("title", ""),
+            "description": result.get("content", ""),
+            "position": i + 1,
+        })
+
+    return {"success": True, "data": {"web": web_results}}
 
 
 DEFAULT_MIN_LENGTH_FOR_SUMMARIZATION = 5000
@@ -1147,6 +1199,15 @@ def web_search_tool(query: str, limit: int = 5) -> str:
             _debug.save()
             return result_json
 
+        if backend == "searxng":
+            response_data = _searxng_search(query, limit)
+            debug_call_data["results_count"] = len(response_data.get("data", {}).get("web", []))
+            result_json = json.dumps(response_data, indent=2, ensure_ascii=False)
+            debug_call_data["final_response_size"] = len(result_json)
+            _debug.log_call("web_search_tool", debug_call_data)
+            _debug.save()
+            return result_json
+
         if backend == "tavily":
             logger.info("Tavily search: '%s' (limit: %d)", query, limit)
             raw = _tavily_request("search", {
@@ -1297,6 +1358,36 @@ async def web_extract_tool(
                     "include_images": False,
                 })
                 results = _normalize_tavily_documents(raw, fallback_url=safe_urls[0] if safe_urls else "")
+            elif backend == "searxng":
+                logger.info("SearXNG does not support extraction, falling back to Firecrawl")
+                formats: List[str] = []
+                if format == "markdown":
+                    formats = ["markdown"]
+                elif format == "html":
+                    formats = ["html"]
+
+                results = []
+                for url in safe_urls:
+                    try:
+                        scrape_params = {}
+                        if formats:
+                            scrape_params["formats"] = formats
+                        response = _get_firecrawl_client().scrape(url=url, **scrape_params)
+                        content = ""
+                        if isinstance(response, dict):
+                            content = response.get("markdown") or response.get("html") or response.get("rawHtml", "")
+                        elif hasattr(response, "markdown"):
+                            content = response.markdown or getattr(response, "html", "") or ""
+                        results.append({
+                            "url": url,
+                            "title": getattr(response, "metadata", {}).get("title", "") if hasattr(response, "metadata") else (response.get("metadata", {}) or {}).get("title", ""),
+                            "content": content,
+                            "raw_content": content,
+                            "metadata": {"sourceURL": url, "title": ""},
+                        })
+                    except Exception as e:
+                        logger.warning("Firecrawl fallback extraction failed for %s: %s", url, e)
+                        results.append({"url": url, "title": "", "content": "", "error": f"Extraction failed: {e}"})
             else:
                 # ── Firecrawl extraction ──
                 # Determine requested formats for Firecrawl v2
@@ -1967,9 +2058,9 @@ def check_firecrawl_api_key() -> bool:
 def check_web_api_key() -> bool:
     """Check whether the configured web backend is available."""
     configured = _load_web_config().get("backend", "").lower().strip()
-    if configured in ("exa", "parallel", "firecrawl", "tavily"):
+    if configured in ("exa", "parallel", "firecrawl", "tavily", "searxng"):
         return _is_backend_available(configured)
-    return any(_is_backend_available(backend) for backend in ("exa", "parallel", "firecrawl", "tavily"))
+    return any(_is_backend_available(backend) for backend in ("exa", "parallel", "firecrawl", "tavily", "searxng"))
 
 
 def check_auxiliary_model() -> bool:
@@ -2002,6 +2093,8 @@ if __name__ == "__main__":
             print("   Using Exa API (https://exa.ai)")
         elif backend == "parallel":
             print("   Using Parallel API (https://parallel.ai)")
+        elif backend == "searxng":
+            print(f"   Using SearXNG: {_get_searxng_url()}")
         elif backend == "tavily":
             print("   Using Tavily API (https://tavily.com)")
         else:
@@ -2016,7 +2109,7 @@ if __name__ == "__main__":
     else:
         print("❌ No web search backend configured")
         print(
-            "Set EXA_API_KEY, PARALLEL_API_KEY, TAVILY_API_KEY, FIRECRAWL_API_KEY, FIRECRAWL_API_URL"
+            "Set EXA_API_KEY, PARALLEL_API_KEY, TAVILY_API_KEY, FIRECRAWL_API_KEY, FIRECRAWL_API_URL, SEARXNG_URL"
             f"{_firecrawl_backend_help_suffix()}"
         )
 
