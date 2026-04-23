@@ -295,7 +295,7 @@ TOOL_CATEGORIES = {
                 "tag": "Open-source federated search (self-hosted)",
                 "web_backend": "searxng",
                 "env_vars": [
-                    {"key": "SEARXNG_URL", "prompt": "SearXNG instance URL (e.g., https://searx.example.com)"},
+                    {"key": "SEARXNG_URL", "prompt": "SearXNG instance URL (e.g., http://searx.example.com)"},
                 ],
             },
             {
